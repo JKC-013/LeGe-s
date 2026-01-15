@@ -15,14 +15,20 @@ const Favorites: React.FC<FavoritesProps> = ({ onSongClick, onBack, isLoggedIn }
   const [songs, setSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchFavs = async () => {
+    const { data } = await supabase.getSongs();
+    setSongs((data || []).filter(s => s.isFavorite));
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const fetchFavs = async () => {
-      const { data } = await supabase.getSongs();
-      setSongs((data || []).filter(s => s.isFavorite));
-      setLoading(false);
-    };
     fetchFavs();
   }, []);
+
+  const handleFavoriteToggle = (id: string) => {
+    // Optimistic UI: remove immediately from list if on favorites page
+    setSongs(prev => prev.filter(s => s.id !== id));
+  };
 
   if (loading) {
     return (
@@ -52,7 +58,13 @@ const Favorites: React.FC<FavoritesProps> = ({ onSongClick, onBack, isLoggedIn }
       {songs.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           {songs.map(song => (
-            <SongCard key={song.id} song={song} onClick={(id) => onSongClick(id)} isLoggedIn={isLoggedIn} />
+            <SongCard 
+              key={song.id} 
+              song={song} 
+              onClick={(id) => onSongClick(id)} 
+              isLoggedIn={isLoggedIn}
+              onFavoriteChange={handleFavoriteToggle}
+            />
           ))}
         </div>
       ) : (

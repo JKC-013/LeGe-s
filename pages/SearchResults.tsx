@@ -18,12 +18,13 @@ const SearchResults: React.FC<SearchResultsProps> = ({ searchTerm, onSongClick, 
 
   useEffect(() => {
     const fetchSongs = async () => {
+      setLoading(true);
       const { data } = await supabase.getSongs();
       setSongs(data || []);
       setLoading(false);
     };
     fetchSongs();
-  }, []);
+  }, [isLoggedIn]);
 
   const filteredResults = useMemo(() => {
     if (!searchTerm.trim()) return [];
@@ -65,7 +66,6 @@ const SearchResults: React.FC<SearchResultsProps> = ({ searchTerm, onSongClick, 
               song={song} 
               isLoggedIn={isLoggedIn}
               onClick={(id) => {
-                supabase.incrementSearch(id);
                 onSongClick(id);
               }} 
             />

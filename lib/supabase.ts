@@ -1,9 +1,9 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Song, AuthUser, SongVariant } from '../types';
+import { Song, AuthUser, SongVariant, UserProfile } from '../types';
 
-const SUPABASE_URL = 'https://qdgdffcgpwjpjlsecmvk.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkZ2RmZmNncHdqcGpsc2VjbXZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzNTgzMDksImV4cCI6MjA4MzkzNDMwOX0.-9raxoX8hOgCn2g7oRhGqS6Y5bfc9u0f08S76rWcl7A';
+const SUPABASE_URL = 'https://fmnavpehjraucuhzmbol.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZtbmF2cGVoanJhdWN1aHptYm9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg0Mjc5NzYsImV4cCI6MjA4NDAwMzk3Nn0.nlNXUZfP_rxk2qAN8Js_eHwqdEVTfiACDPkppq8_rNs';
 
 class SupabaseService {
   public client: SupabaseClient;
@@ -13,46 +13,52 @@ class SupabaseService {
     this.client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
 
-  async signUpWithEmail(email: string, password: string) {
-    return await this.client.auth.signUp({
-      email,
+  async signUpWithEmail(email: string, password: string, username: string) {
+    return await this.client.auth.signUp({ 
+      email, 
       password,
+      options: {
+        data: { username }
+      }
     });
   }
 
   async signInWithEmail(email: string, password: string) {
-    return await this.client.auth.signInWithPassword({
-      email,
-      password,
-    });
-  }
-
-  async loginAsAdmin() {
-    const mockAdmin: AuthUser = { 
-      id: 'demo-admin-id', 
-      email: 'admin@lege.music', 
-      isAdmin: true 
-    };
-    this.user = mockAdmin;
-    return { user: mockAdmin, error: null };
+    return await this.client.auth.signInWithPassword({ email, password });
   }
 
   async logout() {
-    await this.client.auth.signOut();
     this.user = null;
+    try {
+      await this.client.auth.signOut();
+    } catch (e) {
+      console.warn("Supabase signOut error:", e);
+    }
+  }
+
+  private async ensureProfileExists(userId: string, email?: string, username?: string) {
+    if (!userId) return;
+    try {
+      const { data: profile } = await this.client.from('profiles').select('username').eq('id', userId).maybeSingle();
+      if (!profile) {
+        await this.client.from('profiles').upsert({ 
+          id: userId, 
+          email: email, 
+          username: username || email?.split('@')[0] || 'User' 
+        }, { onConflict: 'id' });
+      }
+    } catch (e) {
+      console.warn("Profile sync failed:", e);
+    }
   }
 
   async getSongs() {
     try {
       const { data: authData } = await this.client.auth.getUser();
       const currentUser = authData?.user;
-
       const { data: songsData, error: songsError } = await this.client
         .from('songs')
-        .select(`
-          *,
-          variants:song_variants(*)
-        `)
+        .select(`*, variants:song_variants(*)`)
         .order('created_at', { ascending: false });
 
       if (songsError) throw songsError;
@@ -63,10 +69,7 @@ class SupabaseService {
           .from('user_favorites')
           .select('song_id')
           .eq('user_id', currentUser.id);
-        
-        if (favsData) {
-          favoriteIds = new Set(favsData.map(f => f.song_id));
-        }
+        if (favsData) favoriteIds = new Set(favsData.map(f => f.song_id));
       }
 
       const transformedData: Song[] = (songsData || []).map((song: any) => ({
@@ -74,29 +77,66 @@ class SupabaseService {
         isFavorite: favoriteIds.has(song.id),
         variants: song.variants || []
       }));
-
       return { data: transformedData, error: null };
     } catch (error) {
-      console.error("Supabase getSongs error:", error);
       return { data: [], error };
     }
   }
 
-  async getTopSongs(limit = 10) {
+  async getSongById(id: string) {
     try {
-      const { data, error } = await this.client
+      const { data: authData } = await this.client.auth.getUser();
+      const currentUser = authData?.user;
+      const { data: song, error } = await this.client
         .from('songs')
-        .select(`
-          *,
-          variants:song_variants(*)
-        `)
-        .order('search_count', { ascending: false })
-        .limit(limit);
+        .select(`*, variants:song_variants(*)`)
+        .eq('id', id)
+        .single();
 
       if (error) throw error;
-      return { data: (data || []).filter(s => s.search_count > 0), error: null };
+
+      let isFavorite = false;
+      if (currentUser) {
+        const { data: fav } = await this.client
+          .from('user_favorites')
+          .select('id')
+          .eq('user_id', currentUser.id)
+          .eq('song_id', id)
+          .maybeSingle();
+        isFavorite = !!fav;
+      }
+
+      return { 
+        data: { ...song, isFavorite, variants: song.variants || [] } as Song, 
+        error: null 
+      };
     } catch (error) {
-      return { data: [], error };
+      return { data: null, error };
+    }
+  }
+
+  async toggleFavorite(songId: string) {
+    try {
+      const { data: authData } = await this.client.auth.getUser();
+      const currentUser = authData?.user;
+      if (!currentUser) return { success: false, error: 'Not authenticated' };
+
+      const { data: existing } = await this.client
+        .from('user_favorites')
+        .select('id')
+        .eq('user_id', currentUser.id)
+        .eq('song_id', songId)
+        .maybeSingle();
+
+      if (existing) {
+        await this.client.from('user_favorites').delete().eq('id', existing.id);
+        return { success: true };
+      } else {
+        await this.client.from('user_favorites').insert({ user_id: currentUser.id, song_id: songId });
+        return { success: true };
+      }
+    } catch (error) {
+      return { success: false, error };
     }
   }
 
@@ -104,112 +144,91 @@ class SupabaseService {
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `${fileName}`;
-
-      const { error: uploadError } = await this.client.storage
+      const { data, error: uploadError } = await this.client.storage
         .from('music-sheets')
-        .upload(filePath, file);
+        .upload(fileName, file);
 
       if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = this.client.storage
-        .from('music-sheets')
-        .getPublicUrl(filePath);
-
+      const { data: { publicUrl } } = this.client.storage.from('music-sheets').getPublicUrl(fileName);
       return { url: publicUrl, error: null };
     } catch (error) {
       return { url: null, error };
     }
   }
 
-  async addSong(newSong: Omit<Song, 'id' | 'search_count' | 'created_at'>) {
+  async addSong(newSong: Omit<Song, 'id' | 'created_at'>) {
     const { data: songData, error: songError } = await this.client
       .from('songs')
-      .insert({
-        name: newSong.name,
-        categories: newSong.categories,
-        instrument: newSong.instrument
-      })
-      .select()
-      .single();
+      .insert({ name: newSong.name, categories: newSong.categories, instrument: newSong.instrument })
+      .select().single();
 
     if (songError) return { data: null, error: songError };
 
-    if (newSong.variants && newSong.variants.length > 0) {
-      const variantsWithId = newSong.variants.map(v => ({
-        song_id: songData.id,
-        key: v.key,
-        pdf_url: v.pdf_url
-      }));
-      await this.client.from('song_variants').insert(variantsWithId);
+    if (newSong.variants?.length) {
+      const variantsWithId = newSong.variants.map(v => ({ song_id: songData.id, key: v.key, pdf_url: v.pdf_url }));
+      const { error: varError } = await this.client.from('song_variants').insert(variantsWithId);
+      if (varError) {
+        await this.client.from('songs').delete().eq('id', songData.id);
+        return { data: null, error: varError };
+      }
     }
-
     return { data: songData, error: null };
   }
 
   async addKeyToSong(id: string, variant: SongVariant) {
-    const { error } = await this.client
-      .from('song_variants')
-      .upsert({
-        song_id: id,
-        key: variant.key,
-        pdf_url: variant.pdf_url
-      }, { onConflict: 'song_id,key' });
-
+    const { error } = await this.client.from('song_variants').upsert({
+      song_id: id, key: variant.key, pdf_url: variant.pdf_url
+    }, { onConflict: 'song_id,key' });
     return { success: !error, error };
-  }
-
-  async toggleFavorite(songId: string) {
-    const { data: authData } = await this.client.auth.getUser();
-    const currentUser = authData?.user;
-    if (!currentUser) return { success: false };
-
-    const { data: existing } = await this.client
-      .from('user_favorites')
-      .select('id')
-      .eq('user_id', currentUser.id)
-      .eq('song_id', songId)
-      .maybeSingle();
-
-    if (existing) {
-      await this.client.from('user_favorites').delete().eq('id', existing.id);
-    } else {
-      await this.client.from('user_favorites').insert({ user_id: currentUser.id, song_id: songId });
-    }
-    return { success: true };
   }
 
   async deleteSong(id: string) {
-    const { error } = await this.client.from('songs').delete().eq('id', id);
-    return { success: !error, error };
-  }
-
-  async incrementSearch(id: string) {
     try {
-      await this.client.rpc('increment_search_count', { song_id: id });
-    } catch (e) {
-      const { data } = await this.client.from('songs').select('search_count').eq('id', id).single();
-      if (data) {
-        await this.client.from('songs').update({ search_count: (data.search_count || 0) + 1 }).eq('id', id);
+      const { data: variants } = await this.client.from('song_variants').select('pdf_url').eq('song_id', id);
+      if (variants?.length) {
+        const filePaths = variants.map(v => v.pdf_url.split('/').pop()!).filter(Boolean);
+        await this.client.storage.from('music-sheets').remove(filePaths);
       }
+      await this.client.from('user_favorites').delete().eq('song_id', id);
+      await this.client.from('song_variants').delete().eq('song_id', id);
+      const { error, count } = await this.client.from('songs').delete({ count: 'exact' }).eq('id', id);
+      if (error) return { success: false, error: error.message };
+      return { success: count !== 0, error: count === 0 ? "Permission Denied" : null };
+    } catch (error: any) {
+      return { success: false, error: error?.message || "Internal error" };
     }
   }
 
-  async addAdmin(email: string) {
+  async grantAdminAccess(email: string) {
+    const { data: profile } = await this.client
+      .from('profiles')
+      .select('email')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (!profile) {
+      return { 
+        success: false, 
+        error: { message: `Account "${email}" not found. The user must sign up for LeGe's before you can grant them admin access.` } 
+      };
+    }
+
     const { error } = await this.client.from('admins').insert({ email });
     return { success: !error, error };
   }
 
-  async getAdmins() {
-    try {
-      const { data, error } = await this.client.from('admins').select('*');
-      return { data: data || [], error };
-    } catch (error) {
-      return { data: [], error };
-    }
+  async getPrivilegedUsers() {
+    const { data, error } = await this.client.from('admins').select('*');
+    return { data: (data || []).map((u: any) => ({ id: u.id, email: u.email })), error };
+  }
+  
+  async getProfiles() {
+    const { data, error } = await this.client.from('profiles').select('*').order('email');
+    return { data: data as UserProfile[], error };
   }
 
-  async removeAdmin(email: string) {
+  async revokeAdminAccess(email: string) {
+    if (email === 'khiemvinhtran1112@gmail.com') return { success: false, error: { message: "Root admin cannot be removed." }};
     const { error } = await this.client.from('admins').delete().eq('email', email);
     return { success: !error, error };
   }
@@ -220,26 +239,34 @@ class SupabaseService {
       return null;
     }
 
+    const userId = session.user.id;
+    const email = session.user.email;
+    const username = session.user.user_metadata?.username;
+
+    await this.ensureProfileExists(userId, email, username);
+
+    const { data: profile } = await this.client
+      .from('profiles')
+      .select('username')
+      .eq('id', userId)
+      .maybeSingle();
+
     let isAdmin = false;
-    const adminEmails = ['admin@lege.music', 'khiemvinhtran1112@gmail.com'];
+    const rootAdmin = 'khiemvinhtran1112@gmail.com';
     
     try {
-      const { data: adminData } = await this.client
-        .from('admins')
-        .select('id')
-        .eq('email', session.user.email)
-        .maybeSingle();
-      isAdmin = !!adminData || adminEmails.includes(session.user.email);
+      const { data: adminData } = await this.client.from('admins').select('id').eq('email', email).maybeSingle();
+      isAdmin = !!adminData || email === rootAdmin;
     } catch (e) {
-      isAdmin = adminEmails.includes(session.user.email);
+      isAdmin = email === rootAdmin;
     }
-
-    this.user = {
-      id: session.user.id,
-      email: session.user.email,
-      isAdmin: isAdmin
+    
+    this.user = { 
+      id: userId, 
+      email: email, 
+      username: profile?.username || username || email.split('@')[0],
+      isAdmin 
     };
-
     return this.user;
   }
 }

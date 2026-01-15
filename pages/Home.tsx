@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, ChevronLeft, ChevronRight, Loader2, Music, TrendingUp } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Loader2, Music, AlertCircle } from 'lucide-react';
 import { Song, Category } from '../types';
 import { CATEGORIES } from '../constants';
 import { supabase } from '../lib/supabase';
 import SongCard from '../components/SongCard';
+import { useDebounce } from '../hooks/useDebounce';
 
 const ITEMS_PER_PAGE = 15;
 
@@ -16,26 +17,32 @@ interface HomeProps {
 
 const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) => {
   const [songs, setSongs] = useState<Song[]>([]);
-  const [topSongs, setTopSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   
+  // Search States
   const [heroSearch, setHeroSearch] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [gridSearch, setGridSearch] = useState('');
+  
+  // Debounce search terms to prevent lag on heavy filtering
+  const debouncedHeroSearch = useDebounce(heroSearch, 300);
+  const debouncedGridSearch = useDebounce(gridSearch, 300);
+
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
   const [currentPage, setCurrentPage] = useState(1);
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
       const { data: all } = await supabase.getSongs();
-      const { data: top } = await supabase.getTopSongs(10);
       setSongs(all || []);
-      setTopSongs(top || []);
       setLoading(false);
     };
     fetchData();
+  }, [isLoggedIn]); // Re-fetch when login state changes to update stars
 
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setShowSuggestions(false);
@@ -45,26 +52,27 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Use debounced value for expensive filtering
   const heroSuggestions = useMemo(() => {
-    if (!heroSearch.trim()) return [];
+    if (!debouncedHeroSearch.trim()) return [];
     return songs.filter(s => 
-      s.name.toLowerCase().includes(heroSearch.toLowerCase())
+      s.name.toLowerCase().includes(debouncedHeroSearch.toLowerCase())
     ).slice(0, 5);
-  }, [songs, heroSearch]);
+  }, [songs, debouncedHeroSearch]);
 
+  // Use debounced value for expensive filtering
   const filteredSongs = useMemo(() => {
     return songs.filter(s => {
-      const matchesSearch = s.name.toLowerCase().includes(gridSearch.toLowerCase());
+      const matchesSearch = s.name.toLowerCase().includes(debouncedGridSearch.toLowerCase());
       const matchesCategory = selectedCategory === 'All' || s.categories.includes(selectedCategory as Category);
       return matchesSearch && matchesCategory;
     });
-  }, [songs, gridSearch, selectedCategory]);
+  }, [songs, debouncedGridSearch, selectedCategory]);
 
   const totalPages = Math.ceil(filteredSongs.length / ITEMS_PER_PAGE);
   const currentSongs = filteredSongs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   const handleSongClick = (id: string) => {
-    supabase.incrementSearch(id);
     onSongClick(id);
   };
 
@@ -84,7 +92,7 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-12 space-y-24">
+    <div className="max-w-7xl mx-auto px-6 py-12 space-y-24 pb-24">
       {/* Hero Section */}
       <section className="text-center space-y-10 py-16">
         <h1 className="text-6xl md:text-8xl font-bold tracking-tight leading-[1.1] text-navy serif">
@@ -111,73 +119,47 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
           </form>
 
           {/* Suggestions Dropdown */}
-          {showSuggestions && heroSuggestions.length > 0 && (
+          {showSuggestions && debouncedHeroSearch.trim().length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-3 bg-white border border-beige-darker rounded-2xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
               <div className="p-3 border-b border-beige-darker bg-beige-light/50">
-                <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 ml-2">Quick results</p>
+                <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 ml-2">
+                  {heroSuggestions.length > 0 ? "Quick results" : "No results"}
+                </p>
               </div>
-              {heroSuggestions.map(song => (
-                <button 
-                  key={song.id}
-                  onClick={() => handleSongClick(song.id)}
-                  className="w-full flex items-center gap-4 px-6 py-4 hover:bg-forest-pale transition-colors text-left group"
-                >
-                  <div className="p-2 bg-forest-pale rounded-lg text-forest group-hover:bg-forest group-hover:text-white transition-colors">
-                    <Music size={16} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-navy truncate group-hover:text-forest transition-colors">{song.name}</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{song.instrument} • {song.variants.length} keys</p>
-                  </div>
-                </button>
-              ))}
-              <button 
-                onClick={() => onGlobalSearch(heroSearch)}
-                className="w-full py-4 text-center text-xs font-bold text-forest hover:bg-forest-pale active:bg-forest active:text-white transition-all border-t border-beige-darker"
-              >
-                See all results for "{heroSearch}"
-              </button>
+              
+              {heroSuggestions.length > 0 ? (
+                <>
+                  {heroSuggestions.map(song => (
+                    <button 
+                      key={song.id}
+                      onClick={() => handleSongClick(song.id)}
+                      className="w-full flex items-center gap-4 px-6 py-4 hover:bg-forest-pale transition-colors text-left group"
+                    >
+                      <div className="p-2 bg-forest-pale rounded-lg text-forest group-hover:bg-forest group-hover:text-white transition-colors">
+                        <Music size={16} />
+                      </div>
+                      <div>
+                        <p className="font-bold text-navy truncate group-hover:text-forest transition-colors">{song.name}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{song.instrument} • {song.variants.length} keys</p>
+                      </div>
+                    </button>
+                  ))}
+                  <button 
+                    onClick={() => onGlobalSearch(heroSearch)}
+                    className="w-full py-4 text-center text-xs font-bold text-forest hover:bg-forest-pale active:bg-forest active:text-white transition-all border-t border-beige-darker"
+                  >
+                    See all results for "{heroSearch}"
+                  </button>
+                </>
+              ) : (
+                <div className="py-8 text-center flex flex-col items-center justify-center gap-2">
+                  <AlertCircle size={24} className="text-slate-300" />
+                  <p className="text-sm font-bold text-slate-400">No matching songs found</p>
+                </div>
+              )}
             </div>
           )}
         </div>
-      </section>
-
-      {/* Top 10 Ranking */}
-      <section className="space-y-10">
-        <div className="flex items-center justify-between">
-          <h2 className="text-4xl font-bold text-navy serif">Most searched songs</h2>
-          <div className="h-px bg-beige-darker flex-grow mx-10 hidden md:block" />
-        </div>
-        
-        {topSongs.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-            {topSongs.map((song, index) => (
-              <div 
-                key={song.id}
-                onClick={() => handleSongClick(song.id)}
-                className="relative p-7 bg-white border border-beige-darker rounded-2xl cursor-pointer hover:shadow-xl hover:border-forest hover:-translate-y-1 transition-all group overflow-hidden active:scale-[0.98]"
-              >
-                <span className="absolute -bottom-4 -right-4 text-9xl font-black text-slate-50 opacity-[0.04] group-hover:text-forest group-hover:opacity-[0.05] transition-all serif">
-                  {index + 1}
-                </span>
-                <div className="relative z-10">
-                  <span className="inline-block px-2.5 py-1 bg-forest-pale text-forest text-[10px] font-bold rounded mb-4 group-hover:bg-forest group-hover:text-white transition-all">Rank #{index + 1}</span>
-                  <h4 className="font-bold text-lg mb-3 truncate text-navy serif leading-tight group-hover:text-forest transition-colors">{song.name}</h4>
-                  <div className="flex items-center gap-1.5 text-xs text-slate-500 font-bold">
-                    <span className="text-forest/60 group-hover:text-forest">{song.search_count.toLocaleString()}</span>
-                    <span className="opacity-40 uppercase tracking-widest text-[9px]">searches</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="py-20 text-center border-2 border-dashed border-beige-darker rounded-[2rem] bg-white/50">
-            <TrendingUp className="mx-auto mb-6 text-slate-200" size={56} />
-            <p className="text-2xl font-bold text-navy serif">No trending songs yet</p>
-            <p className="text-slate-400 font-medium mt-2">Start searching for scores to see what's popular!</p>
-          </div>
-        )}
       </section>
 
       {/* All Songs Section */}

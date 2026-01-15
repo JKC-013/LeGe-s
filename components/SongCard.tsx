@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Song } from '../types';
 import { Music, Star } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -8,15 +8,27 @@ interface SongCardProps {
   song: Song;
   onClick: (id: string) => void;
   isLoggedIn?: boolean;
+  onFavoriteChange?: (id: string, isNowFavorite: boolean) => void;
 }
 
-const SongCard: React.FC<SongCardProps> = ({ song, onClick, isLoggedIn }) => {
+const SongCard: React.FC<SongCardProps> = ({ song, onClick, isLoggedIn, onFavoriteChange }) => {
   const [isFav, setIsFav] = React.useState(song.isFavorite);
 
-  const handleFavorite = (e: React.MouseEvent) => {
+  // Keep internal state in sync with props when they change (e.g. after a re-fetch)
+  useEffect(() => {
+    setIsFav(song.isFavorite);
+  }, [song.isFavorite]);
+
+  const handleFavorite = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    supabase.toggleFavorite(song.id);
-    setIsFav(!isFav);
+    if (!isLoggedIn) return;
+    
+    const { success } = await supabase.toggleFavorite(song.id);
+    if (success) {
+      const newFavState = !isFav;
+      setIsFav(newFavState);
+      if (onFavoriteChange) onFavoriteChange(song.id, newFavState);
+    }
   };
 
   return (
@@ -50,9 +62,11 @@ const SongCard: React.FC<SongCardProps> = ({ song, onClick, isLoggedIn }) => {
             </span>
           ))}
         </div>
-        <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold uppercase tracking-widest border-t border-beige-darker pt-4 group-hover:border-forest/20 transition-colors">
-          <span className="flex items-center gap-1">Keys <span className="text-navy group-hover:text-forest">{song.variants.map(v => v.key).join(', ')}</span></span>
-          <span className="text-forest/60">{song.search_count.toLocaleString()} searches</span>
+        <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold border-t border-beige-darker pt-4 group-hover:border-forest/20 transition-colors">
+          <span className="uppercase tracking-widest">Keys</span>
+          <span className="text-navy group-hover:text-forest normal-case font-bold">
+            {song.variants.map(v => v.key).join(', ')}
+          </span>
         </div>
       </div>
     </div>

@@ -1,6 +1,19 @@
 
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, Share2, Info, Music, Star } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  ArrowLeft, 
+  Download, 
+  Share2, 
+  Star, 
+  Loader2, 
+  CheckCircle2, 
+  Music, 
+  ExternalLink, 
+  Maximize2, 
+  Minimize2,
+  AlertCircle,
+  BookOpen
+} from 'lucide-react';
 import { Song } from '../types';
 import { supabase } from '../lib/supabase';
 
@@ -13,163 +26,238 @@ interface SongDetailProps {
 const SongDetail: React.FC<SongDetailProps> = ({ songId, onBack, isLoggedIn }) => {
   const [song, setSong] = useState<Song | null>(null);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
   const [isFav, setIsFav] = useState(false);
-  const totalPages = 5; // Simulated for mock PDF
+  const [loading, setLoading] = useState(true);
+  const [pdfLoading, setPdfLoading] = useState(true);
+  const [shareSuccess, setShareSuccess] = useState(false);
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  
+  // Use a ref to prevent re-fetching the entire song if we already have the PDF URL
+  const hasLoadedSong = useRef(false);
 
   useEffect(() => {
     const fetchSong = async () => {
-      const { data } = await supabase.getSongs();
-      const found = data?.find(s => s.id === songId);
-      if (found) {
-        setSong(found);
-        setIsFav(found.isFavorite || false);
+      // Only show the main loader if we haven't loaded the song yet
+      if (!hasLoadedSong.current) setLoading(true);
+      
+      const { data } = await supabase.getSongById(songId);
+      if (data) {
+        setSong(data);
+        setIsFav(data.isFavorite || false);
+        hasLoadedSong.current = true;
       }
+      setLoading(false);
     };
     fetchSong();
-  }, [songId]);
+  }, [songId, isLoggedIn]); // Re-run on login change to update isFav, but ref handles the loading UI
 
-  const handleFavorite = () => {
-    if (song) {
-      supabase.toggleFavorite(song.id);
-      setIsFav(!isFav);
+  useEffect(() => {
+    if (!song) return;
+    setPdfLoading(true);
+    // Give the iframe a moment to mount
+    const timer = setTimeout(() => setPdfLoading(false), 1200);
+    return () => clearTimeout(timer);
+  }, [selectedVariantIndex, song?.id]);
+
+  const handleFavorite = async () => {
+    if (song && isLoggedIn) {
+      const { success } = await supabase.toggleFavorite(song.id);
+      if (success) setIsFav(!isFav);
     }
   };
 
-  if (!song) return null;
+  const handleShare = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setShareSuccess(true);
+      setTimeout(() => setShareSuccess(false), 2000);
+    } catch (err) {
+      console.error("Share failed:", err);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!song) return;
+    const currentVariant = song.variants[selectedVariantIndex];
+    const pdfUrl = currentVariant?.pdf_url;
+    if (!pdfUrl) return;
+
+    setIsDownloading(true);
+    try {
+      const response = await fetch(pdfUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${song.name} - ${currentVariant.key}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      window.open(pdfUrl, '_blank');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  if (loading && !hasLoadedSong.current) return (
+    <div className="min-h-[70vh] flex flex-col items-center justify-center gap-4">
+      <Loader2 className="animate-spin text-forest" size={40} />
+      <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Opening Music Library...</p>
+    </div>
+  );
+
+  if (!song) return (
+    <div className="min-h-[70vh] flex flex-col items-center justify-center gap-6 text-center px-6">
+      <Music size={64} className="text-slate-200" />
+      <p className="text-xl font-bold text-navy serif">Song not found</p>
+      <button onClick={onBack} className="px-6 py-3 bg-forest text-white rounded-xl font-bold">Return to Library</button>
+    </div>
+  );
 
   const currentVariant = song.variants[selectedVariantIndex];
+  
+  // Google Viewer is generally the most compatible for web embedding
+  const googleViewerUrl = currentVariant?.pdf_url 
+    ? `https://docs.google.com/gview?url=${encodeURIComponent(currentVariant.pdf_url)}&embedded=true` 
+    : '';
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-12 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <button 
-        onClick={onBack}
-        className="flex items-center gap-2 text-slate-400 hover:text-forest hover:translate-x-[-4px] transition-all font-bold text-xs uppercase tracking-widest mb-8 active:text-forest active:scale-95"
-      >
-        <ArrowLeft size={20} />
-        Back to search
-      </button>
+    <div className={`transition-all duration-500 ease-in-out ${isTheaterMode ? 'bg-[#1a1c1e] min-h-screen text-white pb-20' : 'max-w-7xl mx-auto px-6 py-12'}`}>
+      <div className={`flex items-center justify-between mb-8 ${isTheaterMode ? 'px-8 py-4 border-b border-white/10' : ''}`}>
+        <button onClick={onBack} className={`flex items-center gap-2 transition-all font-bold text-xs uppercase tracking-widest ${isTheaterMode ? 'text-slate-400 hover:text-white' : 'text-slate-400 hover:text-forest'}`}>
+          <ArrowLeft size={18} /> Back to Library
+        </button>
+        
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setIsTheaterMode(!isTheaterMode)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${isTheaterMode ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-forest-pale text-forest hover:bg-forest hover:text-white'}`}
+          >
+            {isTheaterMode ? <><Minimize2 size={16} /> Exit Theater</> : <><Maximize2 size={16} /> Theater Mode</>}
+          </button>
+        </div>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
-        {/* Metadata Sidebar */}
-        <div className="space-y-8">
-          <div>
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <h1 className="text-5xl font-bold serif text-navy leading-tight">{song.name}</h1>
-              {isLoggedIn && (
-                <button 
-                  onClick={handleFavorite}
-                  className={`p-3 rounded-2xl border transition-all ${isFav ? 'bg-amber-50 border-amber-200 text-amber-500' : 'bg-white border-beige-darker text-slate-300 hover:text-amber-400 hover:border-amber-200'}`}
-                  title={isFav ? "Remove from favorites" : "Add to favorites"}
-                >
-                  <Star size={24} fill={isFav ? 'currentColor' : 'none'} />
-                </button>
-              )}
-            </div>
+      <div className={`grid gap-12 transition-all duration-500 ${isTheaterMode ? 'px-8 grid-cols-1' : 'grid-cols-1 lg:grid-cols-4'}`}>
+        
+        {/* Sidebar */}
+        <div className={`space-y-8 ${isTheaterMode ? 'hidden' : 'lg:col-span-1'}`}>
+          <div className="space-y-4">
+            <h1 className="text-4xl font-bold serif text-navy leading-tight">{song.name}</h1>
             <div className="flex flex-wrap gap-2">
               {song.categories.map(cat => (
-                <span key={cat} className="px-3 py-1 bg-forest-pale text-forest border border-forest/10 rounded-full text-[10px] font-bold uppercase tracking-widest">
-                  {cat}
-                </span>
+                <span key={cat} className="px-2 py-0.5 bg-forest-pale text-forest border border-forest/10 rounded-md text-[9px] font-bold uppercase tracking-widest">{cat}</span>
               ))}
             </div>
           </div>
 
-          <div className="bg-white p-8 border border-beige-darker rounded-[2rem] shadow-sm space-y-8">
-            <h3 className="flex items-center gap-2 font-bold text-navy uppercase tracking-widest text-xs border-b border-beige-darker pb-4">
-              <Info size={18} className="text-forest" /> Song Details
-            </h3>
-            
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-[0.2em]">Available Keys</p>
-                <div className="flex flex-wrap gap-2">
-                  {song.variants.map((variant, idx) => (
-                    <button
-                      key={variant.key}
-                      onClick={() => setSelectedVariantIndex(idx)}
-                      className={`min-w-[48px] h-11 px-4 flex items-center justify-center rounded-xl text-xs font-bold transition-all ${selectedVariantIndex === idx ? 'bg-forest text-white shadow-lg shadow-forest/20' : 'bg-white text-slate-500 border border-beige-darker hover:bg-forest-pale hover:border-forest/50 active:bg-forest active:text-white'}`}
-                    >
-                      {variant.key}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-y-6">
-                <div>
-                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-[0.2em] mb-1">Instrument</p>
-                  <p className="text-lg font-bold text-navy serif group-hover:text-forest transition-colors">{song.instrument}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-[0.2em] mb-1">Total Search</p>
-                  <p className="text-lg font-bold text-navy serif group-hover:text-forest transition-colors">{song.search_count.toLocaleString()}</p>
-                </div>
+          <div className="bg-white p-6 border border-beige-darker rounded-3xl shadow-sm space-y-6">
+            <div className="space-y-4">
+              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-[0.2em]">Key Selection</p>
+              <div className="grid grid-cols-3 gap-2">
+                {song.variants.map((variant, idx) => (
+                  <button
+                    key={variant.key}
+                    onClick={() => setSelectedVariantIndex(idx)}
+                    className={`h-10 flex items-center justify-center rounded-xl text-xs font-bold transition-all ${selectedVariantIndex === idx ? 'bg-forest text-white' : 'bg-white text-slate-500 border border-beige-darker hover:border-forest/50'}`}
+                  >
+                    <span className="normal-case">{variant.key}</span>
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div className="pt-4 flex flex-col gap-3">
-              <a 
-                href={currentVariant?.pdf_url} 
-                target="_blank" 
-                rel="noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-4 bg-forest hover:bg-forest-hover active:bg-forest active:scale-[0.98] text-white rounded-2xl font-bold transition-all shadow-xl shadow-forest/10"
-              >
-                <Download size={18} /> Download {currentVariant?.key} Key PDF
-              </a>
-              <button className="flex items-center justify-center gap-2 w-full py-4 border border-beige-darker hover:bg-forest-pale hover:text-forest hover:border-forest active:bg-forest active:text-white rounded-2xl font-bold transition-all text-slate-500">
-                <Share2 size={18} /> Share Sheet
-              </button>
+            <div className="pt-4 space-y-3">
+              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-[0.2em]">Actions</p>
+              <div className="flex flex-col gap-2">
+                {isLoggedIn && (
+                  <button 
+                    onClick={handleFavorite}
+                    className={`flex items-center justify-center gap-2 py-3 rounded-xl border font-bold text-xs uppercase tracking-widest transition-all ${isFav ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-beige-darker text-slate-400 hover:text-navy hover:border-navy'}`}
+                  >
+                    <Star size={16} fill={isFav ? 'currentColor' : 'none'} />
+                    {isFav ? 'Favorited' : 'Add to Favorites'}
+                  </button>
+                )}
+                <button onClick={handleShare} className="flex items-center justify-center gap-2 py-3 border border-beige-darker rounded-xl font-bold text-xs uppercase tracking-widest text-slate-400 hover:bg-forest-pale hover:text-forest transition-all">
+                  {shareSuccess ? <><CheckCircle2 size={16} /> Copied</> : <><Share2 size={16} /> Share Link</>}
+                </button>
+                
+                <button 
+                  onClick={handleDownload}
+                  disabled={isDownloading || !currentVariant?.pdf_url}
+                  className="flex items-center justify-center gap-2 py-3 bg-forest text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-forest-hover transition-all shadow-lg shadow-forest/10 w-full disabled:opacity-70"
+                >
+                  {isDownloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  {isDownloading ? 'Preparing...' : 'Download PDF'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Music Score Viewer */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="relative group bg-beige-dark rounded-[2.5rem] overflow-hidden border border-beige-darker min-h-[850px] flex items-center justify-center shadow-inner">
-            <div className="w-[85%] h-[92%] bg-white shadow-2xl rounded-sm p-12 flex flex-col relative animate-in fade-in zoom-in-95 duration-300" key={currentVariant?.key}>
-              <div className="flex justify-between items-center mb-12 border-b-2 border-black/5 pb-4">
-                <span className="serif text-2xl font-bold text-navy/40 group-hover:text-forest transition-colors">LeGe's • Key of {currentVariant?.key}</span>
-                <span className="text-[10px] font-bold tracking-widest text-slate-300">PAGE {currentPage} / {totalPages}</span>
-              </div>
-              
-              <div className="flex-grow space-y-10 py-8">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="space-y-1.5 opacity-10">
-                    {Array.from({ length: 5 }).map((_, j) => (
-                      <div key={j} className="h-[2px] bg-navy w-full" />
-                    ))}
-                  </div>
-                ))}
-                <div className="text-center italic text-slate-300 py-12 serif text-xl select-none group-hover:text-forest/20 transition-colors">
-                  Simulated Score Preview for "{song.name}" in Key {currentVariant?.key}...
-                </div>
-              </div>
-
-              {/* Navigation overlay */}
-              <div className="absolute inset-y-0 left-0 w-24 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                 <button 
-                  disabled={currentPage === 1}
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  className="p-4 bg-white/90 shadow-xl rounded-full hover:bg-forest hover:text-white disabled:opacity-20 transition-all text-navy active:scale-90"
-                >
-                  <ChevronLeft size={32} />
-                </button>
-              </div>
-              <div className="absolute inset-y-0 right-0 w-24 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <button 
-                  disabled={currentPage === totalPages}
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  className="p-4 bg-white/90 shadow-xl rounded-full hover:bg-forest hover:text-white disabled:opacity-20 transition-all text-navy active:scale-90"
-                >
-                  <ChevronRight size={32} />
-                </button>
-              </div>
+        {/* Main Viewer Area */}
+        <div className={`${isTheaterMode ? 'w-full max-w-5xl mx-auto' : 'lg:col-span-3'} space-y-6`}>
+          {isTheaterMode && (
+            <div className="flex items-center justify-between mb-6 bg-white/5 p-5 rounded-2xl border border-white/5">
+               <h2 className="text-2xl font-bold serif">{song.name} — Key <span className="normal-case">{currentVariant.key}</span></h2>
+               <div className="flex items-center gap-2">
+                  {song.variants.map((variant, idx) => (
+                    <button key={variant.key} onClick={() => setSelectedVariantIndex(idx)} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${selectedVariantIndex === idx ? 'bg-white text-navy' : 'bg-white/10 text-white hover:bg-white/20'}`}><span className="normal-case">{variant.key}</span></button>
+                  ))}
+               </div>
             </div>
-          </div>
-          <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] px-8">
-            <p>Viewing Page {currentPage} of {totalPages}</p>
-            <p>Sheet quality: HD (PDF)</p>
+          )}
+
+          {/* Viewer Container */}
+          <div className={`relative flex flex-col items-center rounded-[2.5rem] p-4 sm:p-8 transition-all duration-500 ${isTheaterMode ? 'bg-[#121212] border-white/5' : 'bg-white border border-beige-darker shadow-2xl'}`}>
+            
+            {/* The PDF Frame - Extended to a more natural score length */}
+            <div className={`relative w-full aspect-[1/1.41] min-h-[800px] max-h-[1400px] transition-all duration-700 ${isTheaterMode ? 'shadow-[0_0_100px_rgba(0,0,0,0.8)]' : 'shadow-inner'}`}>
+              
+              {pdfLoading ? (
+                 <div className="w-full h-full flex flex-col items-center justify-center bg-beige-bg rounded-[1.5rem] border-2 border-dashed border-beige-darker">
+                   <Loader2 className="animate-spin text-forest mb-4" size={48} />
+                   <p className="text-xs font-bold uppercase tracking-widest text-forest">Preparing Music Sheet...</p>
+                 </div>
+              ) : currentVariant?.pdf_url ? (
+                <div className="w-full h-full relative bg-white rounded-[1.5rem] overflow-hidden">
+                  <iframe
+                    src={googleViewerUrl}
+                    className="w-full h-full border-none"
+                    key={`${song.id}-${selectedVariantIndex}`}
+                    title="Score Viewer"
+                  />
+                  
+                  {/* Quick Action Button */}
+                  <div className="absolute top-4 right-4 z-10 flex gap-2">
+                    <a 
+                      href={currentVariant?.pdf_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="px-4 py-2 bg-forest/90 backdrop-blur rounded-lg text-white text-[10px] font-bold uppercase tracking-widest shadow-lg flex items-center gap-2 hover:bg-forest transition-colors"
+                    >
+                      <ExternalLink size={14} /> Full Screen
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 rounded-[1.5rem]">
+                  <Music size={48} className="text-slate-300 mb-4" />
+                  <p className="font-bold text-slate-400">Score preparation failed</p>
+                </div>
+              )}
+            </div>
+
+            <div className={`flex items-center gap-6 mt-8 mb-4 text-[10px] font-bold uppercase tracking-[0.2em] opacity-40 ${isTheaterMode ? 'text-white' : 'text-slate-500'}`}>
+              <div className="flex items-center gap-2"><BookOpen size={14} /> <span>Interactive Music Reader</span></div>
+              <a href={currentVariant?.pdf_url} target="_blank" rel="noopener noreferrer" className="hover:opacity-100 transition-opacity flex items-center gap-1 underline">
+                <ExternalLink size={12} /> Secure Source
+              </a>
+            </div>
           </div>
         </div>
       </div>

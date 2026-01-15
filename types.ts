@@ -12,19 +12,21 @@ export interface Song {
   name: string;
   categories: Category[];
   instrument: Instrument;
-  search_count: number;
   created_at: string;
   variants: SongVariant[];
   isFavorite?: boolean;
 }
 
-export interface Admin {
-  id: string;
-  email: string;
-}
-
 export interface AuthUser {
   id: string;
   email: string;
+  username: string;
   isAdmin: boolean;
+}
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  username: string;
+  created_at?: string;
 }
