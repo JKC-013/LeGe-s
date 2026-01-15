@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Star, LogIn, Loader2, X, Music, Heart, Facebook, Mail, User } from 'lucide-react';
+import { LayoutDashboard, Star, LogIn, Loader2, X, Music, Heart, Facebook, Mail, User, Eye, EyeOff } from 'lucide-react';
 import Logo from './components/Logo';
 import Home from './pages/Home';
 import SongDetail from './pages/SongDetail';
@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const [authUsername, setAuthUsername] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Refresh inputs when switching modes
   useEffect(() => {
@@ -36,6 +37,7 @@ const App: React.FC = () => {
       setAuthPassword('');
       setAuthUsername('');
       setAuthError(null);
+      setShowPassword(false);
     }
   }, [authMode, isAuthModalOpen]);
 
@@ -191,8 +193,8 @@ const App: React.FC = () => {
       </nav>
 
       {isAuthModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-navy/40 backdrop-blur-sm">
-          <div className="relative w-full max-w-md bg-beige-bg rounded-[2.5rem] shadow-2xl overflow-hidden p-10 space-y-8 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[100] flex justify-center items-start sm:items-center p-4 sm:p-6 bg-navy/40 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-md my-8 bg-beige-bg rounded-[2.5rem] shadow-2xl overflow-hidden p-8 sm:p-10 space-y-8 animate-in zoom-in-95 duration-200">
             <button onClick={() => setIsAuthModalOpen(false)} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-navy hover:bg-slate-100 rounded-full transition-all"><X size={20} /></button>
             
             {authMode === 'success' ? (
@@ -243,7 +245,23 @@ const App: React.FC = () => {
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Password</label>
-                    <input type="password" required className="w-full px-6 py-4 bg-white border border-beige-darker rounded-2xl outline-none transition-all font-semibold text-navy focus:ring-4 focus:ring-forest-pale focus:border-forest" placeholder="••••••••" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} />
+                    <div className="relative">
+                      <input 
+                        type={showPassword ? "text" : "password"} 
+                        required 
+                        className="w-full px-6 py-4 pr-14 bg-white border border-beige-darker rounded-2xl outline-none transition-all font-semibold text-navy focus:ring-4 focus:ring-forest-pale focus:border-forest" 
+                        placeholder="••••••••" 
+                        value={authPassword} 
+                        onChange={(e) => setAuthPassword(e.target.value)} 
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-slate-300 hover:text-forest transition-colors"
+                      >
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
                   </div>
                   {authError && <div className="p-4 bg-red-50 text-red-600 text-xs font-bold rounded-xl animate-in shake-in border border-red-100">{authError}</div>}
                   <button type="submit" disabled={authLoading} className="w-full py-5 bg-forest text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 shadow-xl shadow-forest/10 hover:bg-forest-hover transition-all active:scale-[0.98]">
