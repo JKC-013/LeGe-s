@@ -32,15 +32,25 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
   const [currentPage, setCurrentPage] = useState(1);
   const searchRef = useRef<HTMLDivElement>(null);
 
+  // Initial fetch - Only happens once on mount
   useEffect(() => {
+    let isMounted = true;
     const fetchData = async () => {
-      setLoading(true);
-      const { data: all } = await supabase.getSongs();
-      setSongs(all || []);
-      setLoading(false);
+      // If we already have songs, don't show the global overlay spinner again
+      if (songs.length === 0) setLoading(true);
+      
+      try {
+        const { data: all } = await supabase.getSongs();
+        if (isMounted) setSongs(all || []);
+      } catch (error) {
+        console.error("Failed to fetch library:", error);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
     };
     fetchData();
-  }, [isLoggedIn]); // Re-fetch when login state changes to update stars
+    return () => { isMounted = false; };
+  }, [isLoggedIn]); // Refresh favorite markers when login status changes
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -52,7 +62,6 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Use debounced value for expensive filtering
   const heroSuggestions = useMemo(() => {
     if (!debouncedHeroSearch.trim()) return [];
     return songs.filter(s => 
@@ -60,7 +69,6 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
     ).slice(0, 5);
   }, [songs, debouncedHeroSearch]);
 
-  // Use debounced value for expensive filtering
   const filteredSongs = useMemo(() => {
     return songs.filter(s => {
       const matchesSearch = s.name.toLowerCase().includes(debouncedGridSearch.toLowerCase());
@@ -72,10 +80,6 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
   const totalPages = Math.ceil(filteredSongs.length / ITEMS_PER_PAGE);
   const currentSongs = filteredSongs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-  const handleSongClick = (id: string) => {
-    onSongClick(id);
-  };
-
   const handleHeroSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (heroSearch.trim()) {
@@ -83,10 +87,11 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
     }
   };
 
-  if (loading) {
+  if (loading && songs.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="animate-spin text-forest" size={40} />
+      <div className="min-h-[70vh] flex flex-col items-center justify-center gap-4">
+        <Loader2 className="animate-spin text-forest" size={48} />
+        <p className="text-sm font-bold text-slate-400 uppercase tracking-widest animate-pulse">Loading Library...</p>
       </div>
     );
   }
@@ -118,12 +123,11 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
             </div>
           </form>
 
-          {/* Suggestions Dropdown */}
           {showSuggestions && debouncedHeroSearch.trim().length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-3 bg-white border border-beige-darker rounded-2xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
               <div className="p-3 border-b border-beige-darker bg-beige-light/50">
                 <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 ml-2">
-                  {heroSuggestions.length > 0 ? "Quick results" : "No results"}
+                  Results for your search
                 </p>
               </div>
               
@@ -132,7 +136,7 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
                   {heroSuggestions.map(song => (
                     <button 
                       key={song.id}
-                      onClick={() => handleSongClick(song.id)}
+                      onClick={() => onSongClick(song.id)}
                       className="w-full flex items-center gap-4 px-6 py-4 hover:bg-forest-pale transition-colors text-left group"
                     >
                       <div className="p-2 bg-forest-pale rounded-lg text-forest group-hover:bg-forest group-hover:text-white transition-colors">
@@ -162,7 +166,7 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
         </div>
       </section>
 
-      {/* All Songs Section */}
+      {/* Grid Section */}
       <section id="all-songs" className="space-y-10">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
           <h2 className="text-4xl font-bold text-navy serif">Browse Music Sheets</h2>
@@ -171,7 +175,7 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-forest transition-colors" size={18} />
               <input 
                 type="text"
-                placeholder="Search within these results"
+                placeholder="Filter these results..."
                 className="pl-12 pr-6 py-3 bg-white border border-beige-darker rounded-xl text-sm font-semibold focus:ring-2 focus:ring-forest-pale focus:border-forest outline-none w-full md:w-64 transition-all"
                 value={gridSearch}
                 onChange={(e) => {
@@ -183,7 +187,7 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 scrollbar-hide">
               <button 
                 onClick={() => setSelectedCategory('All')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap uppercase tracking-widest ${selectedCategory === 'All' ? 'bg-forest text-white shadow-lg shadow-forest/10 active:scale-[0.95]' : 'bg-white text-slate-500 border border-beige-darker hover:bg-forest-pale hover:border-forest/50 active:bg-forest active:text-white'}`}
+                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap uppercase tracking-widest ${selectedCategory === 'All' ? 'bg-forest text-white shadow-lg shadow-forest/10' : 'bg-white text-slate-500 border border-beige-darker hover:bg-forest-pale hover:border-forest/50'}`}
               >
                 All
               </button>
@@ -191,7 +195,7 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
                 <button 
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
-                  className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap uppercase tracking-widest ${selectedCategory === cat ? 'bg-forest text-white shadow-lg shadow-forest/10 active:scale-[0.95]' : 'bg-white text-slate-500 border border-beige-darker hover:bg-forest-pale hover:border-forest/50 active:bg-forest active:text-white'}`}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap uppercase tracking-widest ${selectedCategory === cat ? 'bg-forest text-white shadow-lg shadow-forest/10' : 'bg-white text-slate-500 border border-beige-darker hover:bg-forest-pale hover:border-forest/50'}`}
                 >
                   {cat}
                 </button>
@@ -203,26 +207,25 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
         {currentSongs.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
             {currentSongs.map(song => (
-              <SongCard key={song.id} song={song} onClick={handleSongClick} isLoggedIn={isLoggedIn} />
+              <SongCard key={song.id} song={song} onClick={onSongClick} isLoggedIn={isLoggedIn} />
             ))}
           </div>
         ) : (
           <div className="py-24 text-center border-2 border-dashed border-beige-darker rounded-[2rem] bg-white/50">
             <Search className="mx-auto mb-6 text-slate-200" size={64} />
             <p className="text-2xl font-bold text-navy serif">No matching sheets</p>
-            <p className="text-slate-400 font-medium mt-2 text-center px-6">Try searching with a different term or category.</p>
+            <p className="text-slate-400 font-medium mt-2">Try adjusting your filters.</p>
           </div>
         )}
 
-        {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-center gap-4 pt-12">
             <button 
               disabled={currentPage === 1}
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              className="p-4 border border-beige-darker rounded-xl disabled:opacity-20 hover:bg-forest-pale hover:border-forest active:bg-forest active:text-white transition-all group"
+              className="p-4 border border-beige-darker rounded-xl disabled:opacity-20 hover:bg-forest-pale hover:border-forest transition-all"
             >
-              <ChevronLeft size={20} className="group-hover:text-forest group-active:text-white transition-colors" />
+              <ChevronLeft size={20} />
             </button>
             <span className="text-xs font-bold text-navy uppercase tracking-[0.2em] px-6">
               Page {currentPage} of {totalPages}
@@ -230,9 +233,9 @@ const Home: React.FC<HomeProps> = ({ onSongClick, onGlobalSearch, isLoggedIn }) 
             <button 
               disabled={currentPage === totalPages}
               onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              className="p-4 border border-beige-darker rounded-xl disabled:opacity-20 hover:bg-forest-pale hover:border-forest active:bg-forest active:text-white transition-all group"
+              className="p-4 border border-beige-darker rounded-xl disabled:opacity-20 hover:bg-forest-pale hover:border-forest transition-all"
             >
-              <ChevronRight size={20} className="group-hover:text-forest group-active:text-white transition-colors" />
+              <ChevronRight size={20} />
             </button>
           </div>
         )}
